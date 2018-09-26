@@ -1,3 +1,5 @@
+DO NOT MERGE
+
 # ci-operator
 
 ci-operator automates and simplifies the process of building and testing
