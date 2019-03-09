@@ -50,22 +50,22 @@ func E2ETestStep(
 
 	template.Name = testConfig.As
 
-	if config.Upgrade {
-		overrides := make(map[string]string)
-		for i := range template.Parameters {
-			p := &template.Parameters[i]
-			switch p.Name {
-			case "JOB_NAME_SAFE":
-				if !params.HasInput(p.Name) {
-					overrides[p.Name] = testConfig.As
-				}
-			case "TEST_COMMAND":
-				p.Value = testConfig.Commands
-			case "CLUSTER_TYPE":
-				p.Value = strings.Split(string(config.ClusterProfile), "-")[0]
+	overrides := make(map[string]string)
+	for i := range template.Parameters {
+		p := &template.Parameters[i]
+		switch p.Name {
+		case "JOB_NAME_SAFE":
+			if !params.HasInput(p.Name) {
+				overrides[p.Name] = testConfig.As
 			}
+		case "TEST_COMMAND":
+			p.Value = testConfig.Commands
+		case "CLUSTER_TYPE":
+			p.Value = strings.Split(string(config.ClusterProfile), "-")[0]
 		}
+	}
 
+	if config.Upgrade {
 		// ensure we depend on the release image
 		name := "RELEASE_IMAGE_INITIAL"
 		template.Parameters = append(template.Parameters, templateapi.Parameter{
@@ -90,9 +90,9 @@ func E2ETestStep(
 			Name:     name,
 			Value:    "true",
 		})
-
-		params = api.NewOverrideParameters(params, overrides)
 	}
+
+	params = api.NewOverrideParameters(params, overrides)
 
 	step := steps.TemplateExecutionStep(template, params, podClient, templateClient, artifactDir, jobSpec)
 	subTests, ok := step.(nestedSubTests)

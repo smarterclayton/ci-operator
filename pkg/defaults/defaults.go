@@ -154,7 +154,7 @@ func FromConfig(
 			addProvidesForStep(initialReleaseStep, params)
 			buildSteps = append(buildSteps, initialReleaseStep)
 
-		} else if rawStep.TestStepConfiguration != nil && rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration != nil && rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration.Upgrade {
+		} else if rawStep.TestStepConfiguration != nil && rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration != nil {
 			var err error
 			step, err = clusterinstall.E2ETestStep(*rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration, *rawStep.TestStepConfiguration, params, podClient, templateClient, secretGetter, artifactDir, jobSpec)
 			if err != nil {
@@ -412,7 +412,7 @@ func stepConfigsForBuild(config *api.ReleaseBuildConfiguration, jobSpec *api.Job
 		switch {
 		case test.ContainerTestConfiguration != nil:
 			buildSteps = append(buildSteps, api.StepConfiguration{TestStepConfiguration: test})
-		case test.OpenshiftInstallerClusterTestConfiguration != nil && test.OpenshiftInstallerClusterTestConfiguration.Upgrade:
+		case test.OpenshiftInstallerClusterTestConfiguration != nil:
 			buildSteps = append(buildSteps, api.StepConfiguration{TestStepConfiguration: test})
 		}
 	}
