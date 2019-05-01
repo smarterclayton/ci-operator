@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"strings"
 
+	"k8s.io/apimachinery/pkg/util/sets"
+
 	"github.com/openshift/ci-operator/pkg/steps/clusterinstall"
 
 	appsclientset "k8s.io/client-go/kubernetes/typed/apps/v1"
@@ -41,9 +43,17 @@ func FromConfig(
 	var buildSteps []api.Step
 	var postSteps []api.Step
 
-	requiredNames := make(map[string]struct{})
+	requiredNames := sets.NewString()
 	for _, target := range requiredTargets {
-		requiredNames[target] = struct{}{}
+		requiredNames.Insert(target)
+	}
+
+	// if a user specifies a template, overwrite what is defined in the config to allow
+	// jobs to gradually transition from external to ci-operator to being provided as
+	// steps
+	excludedTests := sets.NewString()
+	for _, target := range templates {
+		excludedTests.Insert(target.Name)
 	}
 
 	var buildClient steps.BuildClient
@@ -155,6 +165,9 @@ func FromConfig(
 			buildSteps = append(buildSteps, initialReleaseStep)
 
 		} else if rawStep.TestStepConfiguration != nil && rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration != nil && rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration.Upgrade {
+			if excludedTests.Has(rawStep.TestStepConfiguration.As) {
+				continue
+			}
 			var err error
 			step, err = clusterinstall.E2ETestStep(*rawStep.TestStepConfiguration.OpenshiftInstallerClusterTestConfiguration, *rawStep.TestStepConfiguration, params, podClient, templateClient, secretGetter, artifactDir, jobSpec)
 			if err != nil {
@@ -162,6 +175,9 @@ func FromConfig(
 			}
 
 		} else if rawStep.TestStepConfiguration != nil {
+			if excludedTests.Has(rawStep.TestStepConfiguration.As) {
+				continue
+			}
 			step = steps.TestStep(*rawStep.TestStepConfiguration, config.Resources, podClient, artifactDir, jobSpec)
 		}
 

@@ -6,8 +6,13 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/openshift/ci-operator/pkg/api"
+	meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/diff"
+	"k8s.io/client-go/rest"
+
+	templateapi "github.com/openshift/api/template/v1"
+
+	"github.com/openshift/ci-operator/pkg/api"
 )
 
 func addCloneRefs(cfg *api.SourceStepConfiguration) *api.SourceStepConfiguration {
@@ -469,4 +474,163 @@ func formatStep(step api.StepConfiguration) string {
 
 func formatReference(ref api.ImageStreamTagReference) string {
 	return fmt.Sprintf("%s/%s:%s (as:%s)", ref.Namespace, ref.Name, ref.Tag, ref.As)
+}
+
+func TestFromConfig(t *testing.T) {
+	tests := []struct {
+		name string
+
+		config          *api.ReleaseBuildConfiguration
+		jobSpec         *api.JobSpec
+		templates       []*templateapi.Template
+		paramFile       string
+		artifactDir     string
+		promote         bool
+		clusterConfig   *rest.Config
+		requiredTargets []string
+
+		wantGraph bool
+		want      []string
+		wantPost  []string
+		wantErr   bool
+	}{
+		{
+			config: &api.ReleaseBuildConfiguration{
+				InputConfiguration: api.InputConfiguration{
+					BuildRootImage: &api.BuildRootImageConfiguration{
+						ImageStreamTagReference: &api.ImageStreamTagReference{Tag: "manual"},
+					},
+					BaseRPMImages: map[string]api.ImageStreamTagReference{
+						"name": {
+							Namespace: "namespace",
+							Name:      "name",
+							Tag:       "tag",
+						},
+					},
+				},
+			},
+			jobSpec: &api.JobSpec{
+				Refs: &api.Refs{
+					Org:  "org",
+					Repo: "repo",
+				},
+				BaseNamespace: "base-1",
+			},
+			want: []string{"[input:root]", "src", "[input:name-without-rpms]", "name", "[output-images]", "[images]"},
+		},
+
+		{
+			name: "a test referencing an image and a root defines a valid graph",
+
+			config: &api.ReleaseBuildConfiguration{
+				InputConfiguration: api.InputConfiguration{
+					BuildRootImage: &api.BuildRootImageConfiguration{
+						ImageStreamTagReference: &api.ImageStreamTagReference{Tag: "manual"},
+					},
+				},
+				Images: []api.ProjectDirectoryImageBuildStepConfiguration{
+					{
+						From: api.PipelineImageStreamTagReference("root"),
+						To:   api.PipelineImageStreamTagReference("name"),
+					},
+				},
+				Tests: []api.TestStepConfiguration{
+					{
+						As: "e2e-aws",
+						ContainerTestConfiguration: &api.ContainerTestConfiguration{
+							From: "name",
+						},
+					},
+				},
+			},
+			jobSpec: &api.JobSpec{
+				Refs: &api.Refs{
+					Org:  "org",
+					Repo: "repo",
+				},
+				BaseNamespace: "base-1",
+			},
+
+			wantGraph: true,
+			want:      []string{"[input:root]", "[output-images]", "src", "name", "[output:stable:name]", "e2e-aws", "[images]"},
+		},
+
+		{
+			name: "specifying a template overrides the step from the config",
+
+			config: &api.ReleaseBuildConfiguration{
+				InputConfiguration: api.InputConfiguration{
+					BuildRootImage: &api.BuildRootImageConfiguration{
+						ImageStreamTagReference: &api.ImageStreamTagReference{Tag: "manual"},
+					},
+				},
+				Images: []api.ProjectDirectoryImageBuildStepConfiguration{
+					{
+						From: api.PipelineImageStreamTagReference("root"),
+						To:   api.PipelineImageStreamTagReference("name"),
+					},
+				},
+				Tests: []api.TestStepConfiguration{
+					{
+						As: "e2e-aws",
+						ContainerTestConfiguration: &api.ContainerTestConfiguration{
+							From: "name",
+						},
+					},
+				},
+			},
+			jobSpec: &api.JobSpec{
+				Refs: &api.Refs{
+					Org:  "org",
+					Repo: "repo",
+				},
+				BaseNamespace: "base-1",
+			},
+			templates: []*templateapi.Template{
+				{
+					ObjectMeta: meta.ObjectMeta{Name: "e2e-aws"},
+				},
+			},
+
+			wantGraph: true,
+			want:      []string{"[input:root]", "e2e-aws", "[output-images]", "src", "name", "[output:stable:name]", "[images]"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, got1, err := FromConfig(tt.config, tt.jobSpec, tt.templates, tt.paramFile, tt.artifactDir, tt.promote, tt.clusterConfig, tt.requiredTargets)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("FromConfig() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+
+			var names []string
+			if tt.wantGraph {
+				// verify we can build a graph from the result
+				graph := api.BuildGraph(got)
+				sorted, err := api.TopologicalSort(graph)
+				if err != nil {
+					t.Fatalf("unexpected error sorting steps: %v", err)
+				}
+				for _, node := range sorted {
+					names = append(names, node.Step.Name())
+				}
+			} else {
+				for _, step := range got {
+					names = append(names, step.Name())
+				}
+			}
+			if !reflect.DeepEqual(names, tt.want) {
+				t.Errorf("\n%v\n%v", names, tt.want)
+			}
+
+			names = nil
+			for _, step := range got1 {
+				names = append(names, step.Name())
+			}
+			if !reflect.DeepEqual(names, tt.wantPost) {
+				t.Errorf("\n%v\n%v", names, tt.wantPost)
+			}
+		})
+	}
 }
