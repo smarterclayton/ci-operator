@@ -6,10 +6,8 @@ import (
 	"encoding/base32"
 	"encoding/json"
 	"encoding/xml"
-	"errors"
 	"flag"
 	"fmt"
-	"io"
 	"io/ioutil"
 	"log"
 	"os"
@@ -426,7 +424,7 @@ func (o *options) Run() error {
 		}
 
 		if o.print {
-			if err := printDigraph(os.Stdout, buildSteps); err != nil {
+			if err := api.PrintDigraph(os.Stdout, buildSteps); err != nil {
 				return fmt.Errorf("could not print graph: %v", err)
 			}
 			return nil
@@ -977,91 +975,12 @@ func jobSpecFromGitRef(ref string) (*api.JobSpec, error) {
 	return &api.JobSpec{Type: api.PeriodicJob, Job: "dev", Refs: &api.Refs{Org: prefix[0], Repo: prefix[1], BaseRef: parts[1], BaseSHA: sha}}, nil
 }
 
-func nodeNames(nodes []*api.StepNode) []string {
-	var names []string
-	for _, node := range nodes {
-		name := node.Step.Name()
-		if len(name) == 0 {
-			name = fmt.Sprintf("<%T>", node.Step)
-		}
-		names = append(names, name)
-	}
-	return names
-}
-
-func linkNames(links []api.StepLink) []string {
-	var names []string
-	for _, link := range links {
-		name := fmt.Sprintf("<%#v>", link)
-		names = append(names, name)
-	}
-	return names
-}
-
-func topologicalSort(nodes []*api.StepNode) ([]*api.StepNode, error) {
-	var sortedNodes []*api.StepNode
-	var satisfied []api.StepLink
-	seen := make(map[api.Step]struct{})
-	for len(nodes) > 0 {
-		var changed bool
-		var waiting []*api.StepNode
-		for _, node := range nodes {
-			for _, child := range node.Children {
-				if _, ok := seen[child.Step]; !ok {
-					waiting = append(waiting, child)
-				}
-			}
-			if _, ok := seen[node.Step]; ok {
-				continue
-			}
-			if !api.HasAllLinks(node.Step.Requires(), satisfied) {
-				waiting = append(waiting, node)
-				continue
-			}
-			satisfied = append(satisfied, node.Step.Creates()...)
-			sortedNodes = append(sortedNodes, node)
-			seen[node.Step] = struct{}{}
-			changed = true
-		}
-		if !changed && len(waiting) > 0 {
-			for _, node := range waiting {
-				var missing []api.StepLink
-				for _, link := range node.Step.Requires() {
-					if !api.HasAllLinks([]api.StepLink{link}, satisfied) {
-						missing = append(missing, link)
-					}
-					log.Printf("step <%T> is missing dependencies: %s", node.Step, strings.Join(linkNames(missing), ", "))
-				}
-			}
-			return nil, errors.New("steps are missing dependencies")
-		}
-		nodes = waiting
-	}
-	return sortedNodes, nil
-}
-
-func printDigraph(w io.Writer, steps []api.Step) error {
-	for _, step := range steps {
-		for _, other := range steps {
-			if step == other {
-				continue
-			}
-			if api.HasAnyLinks(step.Requires(), other.Creates()) {
-				if _, err := fmt.Fprintf(w, "%s %s\n", step.Name(), other.Name()); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return nil
-}
-
 func printExecutionOrder(nodes []*api.StepNode) error {
-	ordered, err := topologicalSort(nodes)
+	ordered, err := api.TopologicalSort(nodes)
 	if err != nil {
 		return fmt.Errorf("could not sort nodes: %v", err)
 	}
-	log.Printf("Running %s", strings.Join(nodeNames(ordered), ", "))
+	log.Printf("Running %s", strings.Join(api.NodeNames(ordered), ", "))
 	return nil
 }
 
